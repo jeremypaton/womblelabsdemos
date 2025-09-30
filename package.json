@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "python -m http.server 8000",
     "serve": "npx serve .",
-    "build": "mkdir -p public && cp -r *.html assets public/",
-    "start": "npx serve public"
+    "build": "echo 'No build needed - serverless functions'",
+    "start": "node api/server.js",
+    "vercel-build": "echo 'No build needed'"
   },
   "keywords": [
     "threejs",
