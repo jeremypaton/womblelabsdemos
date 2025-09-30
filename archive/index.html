@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spark • Raycasting</title>
+  <style>
+    body {
+      margin: 0;
+      /* Default cursor set via JavaScript for better control - 128x128 with finger tip hotspot */
+      cursor: url('./assets/cursor/thanos_point_128.png') 32 16, pointer;
+    }
+
+    header {
+      position: absolute;
+      color: silver;
+      font-family: sans-serif;
+      padding-top: 20px;
+      text-align: center;
+      width: 100vw;
+      z-index: 100;
+    }
+
+    canvas {
+      cursor: inherit;
+    }
+
+    /* Debug info */
+    .debug-info {
+      position: absolute;
+      top: 60px;
+      left: 20px;
+      color: white;
+      font-family: monospace;
+      font-size: 12px;
+      background: rgba(0,0,0,0.7);
+      padding: 10px;
+      border-radius: 5px;
+    }
+
+    /* Camera position display */
+    .camera-position {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      color: white;
+      font-family: monospace;
+      font-size: 14px;
+      background: rgba(0,0,0,0.8);
+      padding: 8px;
+      border-radius: 5px;
+      user-select: text;
+    }
+  </style>
+</head>
+
+<body>
+  <header>Point with Thanos's finger - hover for purple, click to snap!</header>
+  <div class="camera-position" id="cameraPosition">
+    Camera Position: Loading...
+  </div>
+  <div class="debug-info" id="debugInfo">
+    Cursor Debug:<br>
+    Default: <span id="defaultStatus">Loading...</span><br>
+    Snap: <span id="snapStatus">Loading...</span><br>
+    Current: <span id="currentCursor">default</span>
+  </div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js",
+        "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.9/spark.module.js"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { SplatMesh, PackedSplats } from "@sparkjsdev/spark";
+
+    // Test cursor image loading
+    function testCursorImages() {
+      const defaultImg = new Image();
+      const snapImg = new Image();
+      
+      defaultImg.onload = () => {
+        document.getElementById('defaultStatus').textContent = `✓ Loaded (${defaultImg.width}x${defaultImg.height})`;
+      };
+      defaultImg.onerror = () => {
+        document.getElementById('defaultStatus').textContent = '✗ Failed to load';
+      };
+      
+      snapImg.onload = () => {
+        document.getElementById('snapStatus').textContent = `✓ Loaded (${snapImg.width}x${snapImg.height})`;
+      };
+      snapImg.onerror = () => {
+        document.getElementById('snapStatus').textContent = '✗ Failed to load';
+      };
+      
+      defaultImg.src = './assets/cursor/thanos_point_128.png';
+      snapImg.src = './assets/cursor/snap_frame_128_001.png'; // Test first frame of animation
+    }
+
+    async function init() {
+    // Test cursor images first
+    testCursorImages();
+    
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
+    camera.position.set(0.25, 0.05, 0.6);
+    // camera.lookAt(0, -0.15, 0); // Removed to preserve natural camera rotation
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    window.addEventListener('resize', onWindowResize, false);
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // Load forest environment first
+    console.log("Loading forest environment...");
+    try {
+      const forestURL = "./assets/forest.ply";
+      const forestPackedSplats = new PackedSplats({ url: forestURL });
+      await forestPackedSplats.ready;
+      
+      // Create forest environment (static, not interactive)
+      const forestEnvironment = new SplatMesh({ packedSplats: forestPackedSplats });
+      forestEnvironment.name = "forest"; // Tag it as forest for identification
+      forestEnvironment.rotation.x = Math.PI; // Flip the forest right-side up
+      scene.add(forestEnvironment);
+      console.log("Forest environment loaded successfully");
+    } catch (error) {
+      console.error("Error loading forest environment:", error);
+    }
+
+    // Add robots (bears)
+    const NUM_ROBOTS = 5;
+    const robots = [];
+    
+    // Load the local bear.ply file
+    console.log("Loading local bear.ply file...");
+    
+    try {
+      // Load the PLY file using Spark.js PackedSplats
+      const splatURL = "./assets/stuffie.ply";
+      const packedSplats = new PackedSplats({ url: splatURL });
+      
+      // Wait for the splats to load
+      await packedSplats.ready;
+      console.log("Bear PLY file loaded successfully");
+      
+      for (let i = 0; i < NUM_ROBOTS; i++) {
+        const robot = new SplatMesh({ packedSplats });
+        robot.rotation.x = Math.PI;
+        robot.scale.setScalar(0.1); // Adjust scale for the bear (1/3 of original size)
+        robot.name = "bear"; // Tag it as bear for raycasting identification
+        
+        // Random position above camera frustum
+        const spawnPos = getSpawnPositionAboveCamera();
+        robot.position.set(spawnPos.x, spawnPos.y, spawnPos.z);
+        
+        robot.fallSpeed = 0.01 + Math.random() * 0.02; // Random fall speed between 0.01 and 0.03
+        robot.clickedTimer = false;
+        robot.isDisappearing = false;
+        robot.disappearTimer = 0;
+        robot.originalScale = 0.1; // Store original scale
+        scene.add(robot);
+        robots.push(robot);
+      }
+      console.log(`Created ${NUM_ROBOTS} bear splat meshes`);
+      
+    } catch (error) {
+      console.error("Error loading bear PLY:", error);
+      // Fallback: create simple spheres if PLY loading fails
+      for (let i = 0; i < NUM_ROBOTS; i++) {
+        const geometry = new THREE.SphereGeometry(0.1, 16, 16);
+        const material = new THREE.MeshBasicMaterial({ 
+          color: new THREE.Color().setHSL(i / NUM_ROBOTS, 0.7, 0.6)
+        });
+        const robot = new THREE.Mesh(geometry, material);
+        robot.name = "bear"; // Tag it as bear for raycasting identification
+        
+        // Random position above camera frustum
+        const spawnPos = getSpawnPositionAboveCamera();
+        robot.position.set(spawnPos.x, spawnPos.y, spawnPos.z);
+        
+        robot.fallSpeed = 0.01 + Math.random() * 0.02; // Random fall speed between 0.01 and 0.03
+        robot.clickedTimer = false;
+        robot.isDisappearing = false;
+        robot.disappearTimer = 0;
+        robot.originalScale = 1.0; // Store original scale
+        robot.recolor = { set: (r, g, b) => robot.material.color.setRGB(r, g, b) };
+        scene.add(robot);
+        robots.push(robot);
+      }
+      console.log(`Created ${NUM_ROBOTS} fallback bear meshes`);
+    }
+
+    // Cursor management with frame animation - 128x128 version
+    let isSnapping = false;
+    let snapFrameIndex = 0;
+    let snapAnimationInterval = null;
+    const totalSnapFrames = 25; // Now we have 25 frames
+    
+    function startSnapCursor() {
+      if (isSnapping) return; // Prevent multiple snaps
+      
+      isSnapping = true;
+      snapFrameIndex = 1; // Start with frame 1
+      document.getElementById('currentCursor').textContent = 'snapping';
+      
+      // Set initial frame - 128x128 with finger tip hotspot at 32,16
+      document.body.style.cursor = `url('./assets/cursor/snap_frame_128_001.png') 32 16, pointer`;
+      
+      // Animate through frames
+      snapAnimationInterval = setInterval(() => {
+        snapFrameIndex++;
+        if (snapFrameIndex <= totalSnapFrames) {
+          const frameNum = snapFrameIndex.toString().padStart(3, '0');
+          document.body.style.cursor = `url('./assets/cursor/snap_frame_128_${frameNum}.png') 32 16, pointer`;
+        } else {
+          // Animation complete, return to default
+          clearInterval(snapAnimationInterval);
+          document.body.style.cursor = `url('./assets/cursor/thanos_point_128.png') 32 16, pointer`;
+          document.getElementById('currentCursor').textContent = 'default';
+          isSnapping = false;
+        }
+      }, 80); // 80ms per frame for 25 frames = 2 second total animation
+    }
+
+    // Function to get spawn position above camera frustum
+    function getSpawnPositionAboveCamera() {
+      // Calculate approximate frustum bounds at spawn distance
+      const spawnDistance = 8; // Distance above camera (increased from 3)
+      const frustumHeight = Math.tan(camera.fov * Math.PI / 360) * spawnDistance * 2;
+      const frustumWidth = frustumHeight * camera.aspect;
+      
+      return {
+        x: camera.position.x + (Math.random() - 0.5) * frustumWidth,
+        y: camera.position.y + spawnDistance,
+        z: camera.position.z + (Math.random() - 0.5) * frustumWidth
+      };
+    }
+
+    // WASD and arrow key movement controls
+    const keys = {
+      w: false,
+      a: false,
+      s: false,
+      d: false,
+      arrowUp: false,
+      arrowDown: false
+    };
+    
+    // Keyboard event listeners
+    document.addEventListener('keydown', (event) => {
+      switch(event.code) {
+        case 'KeyW':
+          keys.w = true;
+          break;
+        case 'KeyA':
+          keys.a = true;
+          break;
+        case 'KeyS':
+          keys.s = true;
+          break;
+        case 'KeyD':
+          keys.d = true;
+          break;
+        case 'ArrowUp':
+          keys.arrowUp = true;
+          break;
+        case 'ArrowDown':
+          keys.arrowDown = true;
+          break;
+      }
+    });
+    
+    document.addEventListener('keyup', (event) => {
+      switch(event.code) {
+        case 'KeyW':
+          keys.w = false;
+          break;
+        case 'KeyA':
+          keys.a = false;
+          break;
+        case 'KeyS':
+          keys.s = false;
+          break;
+        case 'KeyD':
+          keys.d = false;
+          break;
+        case 'ArrowUp':
+          keys.arrowUp = false;
+          break;
+        case 'ArrowDown':
+          keys.arrowDown = false;
+          break;
+      }
+    });
+
+    // Raycast logic
+    const raycaster = new THREE.Raycaster();
+    let hoveredObject = null;
+    let currentMouseCoords = new THREE.Vector2();
+    let mouseInCanvas = false;
+    
+    // Track mouse position and perform raycasting on mouse move
+    renderer.domElement.addEventListener("mousemove", (event) => {
+      // Adjust for cursor hotspot offset (finger tip is at 32,16, center would be 64,64)
+      const offsetX = event.clientX - 32; // Move left by 32 pixels
+      const offsetY = event.clientY - 48; // Move up by 48 pixels (64-16)
+      
+      currentMouseCoords.set(
+        (offsetX / renderer.domElement.width) * 2 - 1,
+        -(offsetY / renderer.domElement.height) * 2 + 1
+      );
+      mouseInCanvas = true;
+      
+      // Perform hover detection immediately on mouse move
+      updateHoverState();
+    });
+    
+    // Track when mouse leaves canvas
+    renderer.domElement.addEventListener("mouseleave", () => {
+      mouseInCanvas = false;
+      // Reset hover state when mouse leaves
+      if (hoveredObject && !hoveredObject.clickedTimer) {
+        hoveredObject.recolor.set(1, 1, 1);
+      }
+      hoveredObject = null;
+    });
+    
+    // Function to perform hover detection (called every frame)
+    function updateHoverState() {
+      if (!mouseInCanvas) return;
+      
+      // Run raycaster for hover detection
+      raycaster.setFromCamera(currentMouseCoords, camera);
+      const hits = raycaster.intersectObjects(scene.children);
+
+      // Find first bear that's not disappearing (exclude forest environment)
+      const index = hits.findIndex(hit => hit.object.name === "bear" && !hit.object.isDisappearing);
+      
+      if (index >= 0) {
+        const newHoveredObject = hits[index].object;
+        
+        // If we're hovering over a different object
+        if (hoveredObject !== newHoveredObject) {
+          // Reset previous hovered object (if not clicked and not disappearing)
+          if (hoveredObject && !hoveredObject.clickedTimer && !hoveredObject.isDisappearing) {
+            hoveredObject.recolor.set(1, 1, 1); // Reset to white
+          }
+          
+          // Set new hovered object to purple (if not clicked and not disappearing)
+          hoveredObject = newHoveredObject;
+          if (!hoveredObject.clickedTimer && !hoveredObject.isDisappearing) {
+            hoveredObject.recolor.set(1, 0.5, 1); // Purple tint
+          }
+        }
+      } else {
+        // Not hovering over any object
+        if (hoveredObject && !hoveredObject.clickedTimer && !hoveredObject.isDisappearing) {
+          hoveredObject.recolor.set(1, 1, 1); // Reset to white
+        }
+        hoveredObject = null;
+      }
+    }
+
+    // Click handler
+    renderer.domElement.addEventListener("click", (event) => {
+      // Start the snap cursor animation
+      startSnapCursor();
+      
+      // Adjust for cursor hotspot offset (same as mousemove)
+      const offsetX = event.clientX - 32; // Move left by 32 pixels
+      const offsetY = event.clientY - 48; // Move up by 48 pixels (64-16)
+      
+      const clickCoords = new THREE.Vector2(
+        (offsetX / renderer.domElement.width) * 2 - 1,
+        -(offsetY / renderer.domElement.height) * 2 + 1,
+      );
+
+      // Run raycaster
+      raycaster.setFromCamera(clickCoords, camera);
+      const hits = raycaster.intersectObjects(scene.children);
+
+      // Find first bear (exclude forest environment)
+      const index = hits.findIndex(hit => hit.object.name === "bear");
+      if (index >= 0) {
+        const robot = hits[index].object;
+        if (!robot.isDisappearing) {
+          // Start disappearing animation (3 seconds = 180 frames at 60fps)
+          robot.isDisappearing = true;
+          robot.disappearTimer = 180;
+          robot.recolor.set(1, 0.5, 0.5); // Red tint during disappearing
+        }
+      }
+    });
+
+    // Main loop
+    renderer.setAnimationLoop(function animate(time) {
+      // Handle WASD and arrow key camera movement
+      const moveSpeed = 0.05;
+      if (keys.w) camera.position.z += moveSpeed; // Move forward
+      if (keys.s) camera.position.z -= moveSpeed; // Move backward
+      if (keys.a) camera.position.x += moveSpeed; // Move left
+      if (keys.d) camera.position.x -= moveSpeed; // Move right
+      if (keys.arrowUp) camera.position.y += moveSpeed; // Move up
+      if (keys.arrowDown) camera.position.y -= moveSpeed; // Move down
+      
+      // Update camera position display
+      document.getElementById('cameraPosition').textContent = 
+        `Camera Position: (${camera.position.x.toFixed(2)}, ${camera.position.y.toFixed(2)}, ${camera.position.z.toFixed(2)})`;
+      
+      // Animate all robots, handle disappearing animation, and check if it's time to remove tint
+      for (let i = robots.length - 1; i >= 0; i--) {
+        const robot = robots[i];
+        
+        // Handle disappearing animation
+        if (robot.isDisappearing) {
+          robot.disappearTimer -= 1;
+          
+          // Calculate shrinking scale (from original to 0 over 180 frames)
+          const progress = 1 - (robot.disappearTimer / 180);
+          const currentScale = robot.originalScale * (1 - progress);
+          robot.scale.setScalar(Math.max(0, currentScale));
+          
+          // Remove object when timer reaches 0
+          if (robot.disappearTimer <= 0) {
+            scene.remove(robot);
+            robots.splice(i, 1);
+            
+            // Clear hover reference if this was the hovered object
+            if (robot === hoveredObject) {
+              hoveredObject = null;
+            }
+            continue; // Skip the rest of the loop for this robot
+          }
+        } else {
+          // Rain falling movement (only if not disappearing)
+          robot.position.y -= robot.fallSpeed;
+          
+          // Respawn above camera frustum when object falls below
+          if (robot.position.y < camera.position.y - 5) {
+            const newSpawnPos = getSpawnPositionAboveCamera();
+            robot.position.set(newSpawnPos.x, newSpawnPos.y, newSpawnPos.z);
+            robot.fallSpeed = 0.01 + Math.random() * 0.02; // New random fall speed
+          }
+        }
+
+        // Handle old click timer system (keeping for compatibility)
+        if (robot.clickedTimer > 0) {
+          robot.clickedTimer -= 1;
+          if (robot.clickedTimer == 0) {
+            // Clicked timer expired, check if we should show hover or default color
+            if (robot === hoveredObject) {
+            // Still being hovered, show purple
+            robot.recolor.set(1, 0.5, 1);
+            } else {
+              // Not being hovered, show default white
+              robot.recolor.set(1, 1, 1);
+            }
+          }
+        }
+      }
+      
+      renderer.render(scene, camera);
+    });
+    }
+
+    // Initialize the application
+    init().catch(console.error);
+  </script>
+</body>
+
+</html>

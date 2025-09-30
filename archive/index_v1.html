@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spark • Raycasting</title>
+  <style>
+    body {
+      margin: 0;
+      /* Default cursor set via JavaScript for better control - 128x128 with finger tip hotspot */
+      cursor: url('./assets/cursor/thanos_point_128.png') 32 16, pointer;
+    }
+
+    header {
+      position: absolute;
+      color: silver;
+      font-family: sans-serif;
+      padding-top: 20px;
+      text-align: center;
+      width: 100vw;
+      z-index: 100;
+    }
+
+    canvas {
+      cursor: inherit;
+    }
+
+    /* Debug info */
+    .debug-info {
+      position: absolute;
+      top: 60px;
+      left: 20px;
+      color: white;
+      font-family: monospace;
+      font-size: 12px;
+      background: rgba(0,0,0,0.7);
+      padding: 10px;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+
+<body>
+  <header>Point with Thanos's finger - hover for green, click to snap!</header>
+  <div class="debug-info" id="debugInfo">
+    Cursor Debug:<br>
+    Default: <span id="defaultStatus">Loading...</span><br>
+    Snap: <span id="snapStatus">Loading...</span><br>
+    Current: <span id="currentCursor">default</span>
+  </div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js",
+        "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.9/spark.module.js"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { SplatMesh, PackedSplats } from "@sparkjsdev/spark";
+
+    // Test cursor image loading
+    function testCursorImages() {
+      const defaultImg = new Image();
+      const snapImg = new Image();
+      
+      defaultImg.onload = () => {
+        document.getElementById('defaultStatus').textContent = `✓ Loaded (${defaultImg.width}x${defaultImg.height})`;
+      };
+      defaultImg.onerror = () => {
+        document.getElementById('defaultStatus').textContent = '✗ Failed to load';
+      };
+      
+      snapImg.onload = () => {
+        document.getElementById('snapStatus').textContent = `✓ Loaded (${snapImg.width}x${snapImg.height})`;
+      };
+      snapImg.onerror = () => {
+        document.getElementById('snapStatus').textContent = '✗ Failed to load';
+      };
+      
+      defaultImg.src = './assets/cursor/thanos_point_128.png';
+      snapImg.src = './assets/cursor/snap_frame_128_001.png'; // Test first frame of animation
+    }
+
+    async function init() {
+    // Test cursor images first
+    testCursorImages();
+    
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
+    camera.position.set(0, -0.25, -1.5);
+    camera.lookAt(0, -0.15, 0);
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    window.addEventListener('resize', onWindowResize, false);
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // Add robots
+    const NUM_ROBOTS = 5;
+    const robots = [];
+    
+    // Load the local stuffie.ply file
+    console.log("Loading local stuffie.ply file...");
+    
+    try {
+      // Load the PLY file using Spark.js PackedSplats
+      const splatURL = "./assets/stuffie.ply";
+      const packedSplats = new PackedSplats({ url: splatURL });
+      
+      // Wait for the splats to load
+      await packedSplats.ready;
+      console.log("Stuffie PLY file loaded successfully");
+      
+      for (let i = 0; i < NUM_ROBOTS; i++) {
+        const robot = new SplatMesh({ packedSplats });
+        robot.rotation.x = Math.PI;
+        robot.scale.setScalar(0.3); // Adjust scale for the stuffie
+        robot.position.set(0, 0, i * 1.0); // Spread them out more
+        robot.speed = 600 + i * 10;
+        robot.angle = 0;
+        robot.clickedTimer = false;
+        scene.add(robot);
+        robots.push(robot);
+      }
+      console.log(`Created ${NUM_ROBOTS} stuffie splat meshes`);
+      
+    } catch (error) {
+      console.error("Error loading stuffie PLY:", error);
+      // Fallback: create simple spheres if PLY loading fails
+      for (let i = 0; i < NUM_ROBOTS; i++) {
+        const geometry = new THREE.SphereGeometry(0.1, 16, 16);
+        const material = new THREE.MeshBasicMaterial({ 
+          color: new THREE.Color().setHSL(i / NUM_ROBOTS, 0.7, 0.6)
+        });
+        const robot = new THREE.Mesh(geometry, material);
+        robot.position.set(0, 0, i * 1.0);
+        robot.speed = 600 + i * 10;
+        robot.angle = 0;
+        robot.clickedTimer = false;
+        robot.recolor = { set: (r, g, b) => robot.material.color.setRGB(r, g, b) };
+        scene.add(robot);
+        robots.push(robot);
+      }
+      console.log(`Created ${NUM_ROBOTS} fallback sphere meshes`);
+    }
+
+    // Cursor management with frame animation - 128x128 version
+    let isSnapping = false;
+    let snapFrameIndex = 0;
+    let snapAnimationInterval = null;
+    const totalSnapFrames = 25; // Now we have 25 frames
+    
+    function startSnapCursor() {
+      if (isSnapping) return; // Prevent multiple snaps
+      
+      isSnapping = true;
+      snapFrameIndex = 1; // Start with frame 1
+      document.getElementById('currentCursor').textContent = 'snapping';
+      
+      // Set initial frame - 128x128 with finger tip hotspot at 32,16
+      document.body.style.cursor = `url('./assets/cursor/snap_frame_128_001.png') 32 16, pointer`;
+      
+      // Animate through frames
+      snapAnimationInterval = setInterval(() => {
+        snapFrameIndex++;
+        if (snapFrameIndex <= totalSnapFrames) {
+          const frameNum = snapFrameIndex.toString().padStart(3, '0');
+          document.body.style.cursor = `url('./assets/cursor/snap_frame_128_${frameNum}.png') 32 16, pointer`;
+        } else {
+          // Animation complete, return to default
+          clearInterval(snapAnimationInterval);
+          document.body.style.cursor = `url('./assets/cursor/thanos_point_128.png') 32 16, pointer`;
+          document.getElementById('currentCursor').textContent = 'default';
+          isSnapping = false;
+        }
+      }, 80); // 80ms per frame for 25 frames = 2 second total animation
+    }
+
+    // Raycast logic
+    const raycaster = new THREE.Raycaster();
+    let hoveredObject = null;
+    let currentMouseCoords = new THREE.Vector2();
+    let mouseInCanvas = false;
+    
+    // Track mouse position for continuous raycasting
+    renderer.domElement.addEventListener("mousemove", (event) => {
+      // Adjust for cursor hotspot offset (finger tip is at 32,16, center would be 64,64)
+      const offsetX = event.clientX - 32; // Move left by 32 pixels
+      const offsetY = event.clientY - 48; // Move up by 48 pixels (64-16)
+      
+      currentMouseCoords.set(
+        (offsetX / renderer.domElement.width) * 2 - 1,
+        -(offsetY / renderer.domElement.height) * 2 + 1
+      );
+      mouseInCanvas = true;
+    });
+    
+    // Track when mouse leaves canvas
+    renderer.domElement.addEventListener("mouseleave", () => {
+      mouseInCanvas = false;
+      // Reset hover state when mouse leaves
+      if (hoveredObject && !hoveredObject.clickedTimer) {
+        hoveredObject.recolor.set(1, 1, 1);
+      }
+      hoveredObject = null;
+    });
+    
+    // Function to perform hover detection (called every frame)
+    function updateHoverState() {
+      if (!mouseInCanvas) return;
+      
+      // Run raycaster for hover detection
+      raycaster.setFromCamera(currentMouseCoords, camera);
+      const hits = raycaster.intersectObjects(scene.children);
+
+      // Find first SplatMesh
+      const index = hits.findIndex(hit => hit.object instanceof SplatMesh);
+      
+      if (index >= 0) {
+        const newHoveredObject = hits[index].object;
+        
+        // If we're hovering over a different object
+        if (hoveredObject !== newHoveredObject) {
+          // Reset previous hovered object (if not clicked)
+          if (hoveredObject && !hoveredObject.clickedTimer) {
+            hoveredObject.recolor.set(1, 1, 1); // Reset to white
+          }
+          
+          // Set new hovered object to green (if not clicked)
+          hoveredObject = newHoveredObject;
+          if (!hoveredObject.clickedTimer) {
+            hoveredObject.recolor.set(0.5, 1, 0.5); // Green tint
+          }
+        }
+      } else {
+        // Not hovering over any object
+        if (hoveredObject && !hoveredObject.clickedTimer) {
+          hoveredObject.recolor.set(1, 1, 1); // Reset to white
+        }
+        hoveredObject = null;
+      }
+    }
+
+    // Click handler
+    renderer.domElement.addEventListener("click", (event) => {
+      // Start the snap cursor animation
+      startSnapCursor();
+      
+      // Adjust for cursor hotspot offset (same as mousemove)
+      const offsetX = event.clientX - 32; // Move left by 32 pixels
+      const offsetY = event.clientY - 48; // Move up by 48 pixels (64-16)
+      
+      const clickCoords = new THREE.Vector2(
+        (offsetX / renderer.domElement.width) * 2 - 1,
+        -(offsetY / renderer.domElement.height) * 2 + 1,
+      );
+
+      // Run raycaster
+      raycaster.setFromCamera(clickCoords, camera);
+      const hits = raycaster.intersectObjects(scene.children);
+
+      // Find first SplatMesh
+      const index = hits.findIndex(hit => hit.object instanceof SplatMesh);
+      if (index >= 0) {
+        const robot = hits[index].object;
+        if (!robot.clickedTimer) {
+          // Tint object red and start countdown timer to remove tint
+          robot.recolor.set(1, 0.5, 0.5);
+          robot.clickedTimer = 40;
+        }
+      }
+    });
+
+    // Main loop
+    renderer.setAnimationLoop(function animate(time) {
+      // Animate all robots, and check if it's time to remove tint
+      for (let robot of robots) {
+        // Pendulum movement
+        robot.position.x = Math.cos(robot.angle) * 0.6;
+        robot.position.y = Math.sin(robot.angle) * 0.6;
+        robot.angle = Math.PI * 1.5 + Math.sin(time / robot.speed);
+
+        if (robot.clickedTimer > 0) {
+          robot.clickedTimer -= 1;
+          if (robot.clickedTimer == 0) {
+            // Clicked timer expired, check if we should show hover or default color
+            if (robot === hoveredObject) {
+              // Still being hovered, show green
+              robot.recolor.set(0.5, 1, 0.5);
+            } else {
+              // Not being hovered, show default white
+              robot.recolor.set(1, 1, 1);
+            }
+          }
+        }
+      }
+      
+      // Update hover state every frame (after objects have moved)
+      updateHoverState();
+      
+      renderer.render(scene, camera);
+    });
+    }
+
+    // Initialize the application
+    init().catch(console.error);
+  </script>
+</body>
+
+</html>

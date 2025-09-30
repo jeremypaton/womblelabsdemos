@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LoD Compositor - Womble Labs</title>
+  
+  <!-- Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-XXXXXXXXXX');
+  </script>
+  
+  <style>
+    body {
+      margin: 0;
+      background-color: #1a1a1a;
+      font-family: sans-serif;
+      overflow: hidden;
+    }
+
+    header {
+      position: absolute;
+      color: white;
+      font-family: sans-serif;
+      padding: 20px;
+      text-align: center;
+      width: 100vw;
+      z-index: 100;
+      background: rgba(0,0,0,0.7);
+    }
+
+    
+
+  </style>
+</head>
+
+<body>
+  <header>LoD Compositor<br><small>for gaining intution about chunk loading gaussian splots<br>Controls: WASD to move, Q/E for up/down</small></header>
+  
+  
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.178.0/three.module.js",
+        "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/0.1.9/spark.module.js",
+        "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.esm.js"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { SplatMesh, PackedSplats, dyno } from "@sparkjsdev/spark";
+    import GUI from "lil-gui";
+
+    // Splat scaling parameters using dyno
+      const params = {
+        house0Scale: 1.0,
+        house1Scale: 1.0,
+        house2Scale: 1.0
+      };
+    
+    async function init() {
+      
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+      camera.position.set(0, 0, 10);
+      camera.lookAt(0, 0, 0);
+      
+      const renderer = new THREE.WebGLRenderer();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      window.addEventListener('resize', onWindowResize, false);
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+
+      // Add some basic lighting
+      const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+      scene.add(ambientLight);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(10, 10, 5);
+      scene.add(directionalLight);
+
+      // Load and display PLY files
+      const plyFiles = [
+        { name: 'house_0', path: './assets/lod/house_0.ply' },
+        { name: 'house_1', path: './assets/lod/house_1.ply' },
+        { name: 'house_2', path: './assets/lod/house_2.ply' },
+        { name: 'house_full', path: './assets/lod/house_full.ply' }
+      ];
+
+      const loadedMeshes = {};
+      
+      // Array to store all house meshes for rotation
+      const allHouses = [];
+      
+      // References to specific houses for scaling control
+      let house0Mesh, house1Mesh, house2Mesh;
+      let house0Composite, house1Composite, house2Composite;
+
+      try {
+        // Load all PLY files
+        for (const plyFile of plyFiles) {
+          console.log(`Loading ${plyFile.name}...`);
+          const packedSplats = new PackedSplats({ url: plyFile.path });
+          await packedSplats.ready;
+          
+          const mesh = new SplatMesh({ packedSplats });
+          loadedMeshes[plyFile.name] = mesh;
+          console.log(`${plyFile.name} loaded successfully`);
+        }
+
+        // Position meshes according to the layout
+        // Top row: house_0, house_1, house_2 in horizontal line
+        const topRowY = 2;
+        const spacing = 3; // Reduced from 6 to 3 (half distance)
+
+        console.log("Creating house meshes...");
+
+        // Create new SplatMesh instances instead of cloning
+        // house_0 (left)
+        const house0PackedSplats = new PackedSplats({ url: './assets/lod/house_0.ply' });
+        await house0PackedSplats.ready;
+        console.log("house0PackedSplats ready, checking splat count...");
+        
+        // Check if splats are actually loaded
+        let house0SplatCount = 0;
+        house0PackedSplats.forEachSplat(() => house0SplatCount++);
+        console.log("house0PackedSplats has", house0SplatCount, "splats");
+        
+        const house0Top = new SplatMesh({ packedSplats: house0PackedSplats });
+        house0Top.position.set(-spacing, topRowY, 0);
+        // house0Top.rotation.x = Math.PI; // Remove upside down rotation
+        house0Top.scale.setScalar(1.0);
+        scene.add(house0Top);
+        allHouses.push(house0Top);
+        house0Mesh = house0Top; // Store reference for scaling
+        
+        // Store scales immediately after mesh creation since PackedSplats is already ready
+        console.log("Storing house0 scales immediately after mesh creation...");
+        storeOriginalScales(house0Mesh, "house0-immediate");
+        
+        // Also try with a delay as backup
+        setTimeout(() => {
+          const storedScales = originalScales.get(house0Mesh);
+          if (!originalScales.has(house0Mesh) || (storedScales && storedScales.length === 0)) {
+            console.log("Backup: storing house0 scales with delay...");
+            storeOriginalScales(house0Mesh, "house0-delayed");
+          }
+        }, 500);
+        
+        console.log("house_0 added to scene at", house0Top.position);
+
+        // house_1 (center) 
+        const house1PackedSplats = new PackedSplats({ url: './assets/lod/house_1.ply' });
+        await house1PackedSplats.ready;
+        console.log("house1PackedSplats ready, checking splat count...");
+        
+        // Check if splats are actually loaded
+        let house1SplatCount = 0;
+        house1PackedSplats.forEachSplat(() => house1SplatCount++);
+        console.log("house1PackedSplats has", house1SplatCount, "splats");
+        
+        const house1Top = new SplatMesh({ packedSplats: house1PackedSplats });
+        house1Top.position.set(0, topRowY, 0);
+        // house1Top.rotation.x = Math.PI; // Remove upside down rotation
+        house1Top.scale.setScalar(1.0);
+        scene.add(house1Top);
+        allHouses.push(house1Top);
+        house1Mesh = house1Top; // Store reference for scaling
+        
+        // Store scales immediately after mesh creation since PackedSplats is already ready
+        console.log("Storing house1 scales immediately after mesh creation...");
+        storeOriginalScales(house1Mesh, "house1-immediate");
+        
+        // Also try with a delay as backup
+        setTimeout(() => {
+          const storedScales = originalScales.get(house1Mesh);
+          if (!originalScales.has(house1Mesh) || (storedScales && storedScales.length === 0)) {
+            console.log("Backup: storing house1 scales with delay...");
+            storeOriginalScales(house1Mesh, "house1-delayed");
+          }
+        }, 500);
+        
+        console.log("house_1 added to scene at", house1Top.position);
+
+        // house_2 (right)
+        const house2PackedSplats = new PackedSplats({ url: './assets/lod/house_2.ply' });
+        await house2PackedSplats.ready;
+        console.log("house2PackedSplats ready, checking splat count...");
+        
+        // Check if splats are actually loaded
+        let house2SplatCount = 0;
+        house2PackedSplats.forEachSplat(() => house2SplatCount++);
+        console.log("house2PackedSplats has", house2SplatCount, "splats");
+        
+        const house2Top = new SplatMesh({ packedSplats: house2PackedSplats });
+        house2Top.position.set(spacing, topRowY, 0);
+        // house2Top.rotation.x = Math.PI; // Remove upside down rotation
+        house2Top.scale.setScalar(1.0);
+        scene.add(house2Top);
+        allHouses.push(house2Top);
+        house2Mesh = house2Top; // Store reference for scaling
+        console.log("house2Mesh set:", !!house2Mesh, "has packedSplats:", !!house2Mesh?.packedSplats);
+        
+        // Store scales immediately after mesh creation since PackedSplats is already ready
+        console.log("Storing house2 scales immediately after mesh creation...");
+        storeOriginalScales(house2Mesh, "house2-immediate");
+        
+        // Also try with a delay as backup
+        setTimeout(() => {
+          const storedScales = originalScales.get(house2Mesh);
+          if (!originalScales.has(house2Mesh) || (storedScales && storedScales.length === 0)) {
+            console.log("Backup: storing house2 scales with delay...");
+            storeOriginalScales(house2Mesh, "house2-delayed");
+          }
+        }, 500);
+        
+        console.log("house_2 added to scene at", house2Top.position);
+
+        // Bottom row
+        const bottomRowY = -2;
+
+        // Bottom left: house_full
+        const houseFullPackedSplats = new PackedSplats({ url: './assets/lod/house_full.ply' });
+        await houseFullPackedSplats.ready;
+        const houseFull = new SplatMesh({ packedSplats: houseFullPackedSplats });
+        houseFull.position.set(spacing, bottomRowY, 0);
+        // houseFull.rotation.x = Math.PI; // Remove upside down rotation
+        houseFull.scale.setScalar(1.0);
+        scene.add(houseFull);
+        allHouses.push(houseFull);
+        console.log("house_full added to scene at", houseFull.position);
+
+        // BOTTOM ROW: True composites
+        
+        // Bottom left: chunk 0+1 composite (house_0.ply + house_1.ply at same position)
+        console.log("Creating chunk 0+1 composite...");
+        const chunk01_0PackedSplats = new PackedSplats({ url: './assets/lod/house_0.ply' });
+        await chunk01_0PackedSplats.ready;
+        const chunk01_1PackedSplats = new PackedSplats({ url: './assets/lod/house_1.ply' });
+        await chunk01_1PackedSplats.ready;
+        
+        const chunk01_0Mesh = new SplatMesh({ packedSplats: chunk01_0PackedSplats });
+        chunk01_0Mesh.position.set(-spacing, bottomRowY, 0);
+        chunk01_0Mesh.scale.setScalar(1.0);
+        scene.add(chunk01_0Mesh);
+        allHouses.push(chunk01_0Mesh);
+        
+        const chunk01_1Mesh = new SplatMesh({ packedSplats: chunk01_1PackedSplats });
+        chunk01_1Mesh.position.set(-spacing, bottomRowY, 0); // Same position as chunk01_0
+        chunk01_1Mesh.scale.setScalar(1.0);
+        scene.add(chunk01_1Mesh);
+        allHouses.push(chunk01_1Mesh);
+        
+        // Store references for scaling (we'll scale both parts)
+        house0Composite = chunk01_0Mesh; // This will be controlled by chunk_0 slider
+        house1Composite = chunk01_1Mesh; // This will be controlled by chunk_1 slider
+        
+        console.log("Storing scales for chunk 0+1 composite...");
+        storeOriginalScales(house0Composite, "chunk01-part0");
+        storeOriginalScales(house1Composite, "chunk01-part1");
+        
+        // Backup storage with delay
+        setTimeout(() => {
+          if (!originalScales.has(house0Composite)) {
+            console.log("Backup: storing chunk01-part0 scales...");
+            storeOriginalScales(house0Composite, "chunk01-part0-delayed");
+          }
+          if (!originalScales.has(house1Composite)) {
+            console.log("Backup: storing chunk01-part1 scales...");
+            storeOriginalScales(house1Composite, "chunk01-part1-delayed");
+          }
+        }, 500);
+        
+        // Bottom center: chunk 0+1+2 composite (house_0.ply + house_1.ply + house_2.ply at same position)
+        console.log("Creating chunk 0+1+2 composite...");
+        const chunk012_0PackedSplats = new PackedSplats({ url: './assets/lod/house_0.ply' });
+        await chunk012_0PackedSplats.ready;
+        const chunk012_1PackedSplats = new PackedSplats({ url: './assets/lod/house_1.ply' });
+        await chunk012_1PackedSplats.ready;
+        const chunk012_2PackedSplats = new PackedSplats({ url: './assets/lod/house_2.ply' });
+        await chunk012_2PackedSplats.ready;
+        
+        const chunk012_0Mesh = new SplatMesh({ packedSplats: chunk012_0PackedSplats });
+        chunk012_0Mesh.position.set(0, bottomRowY, 0);
+        chunk012_0Mesh.scale.setScalar(1.0);
+        scene.add(chunk012_0Mesh);
+        allHouses.push(chunk012_0Mesh);
+        
+        const chunk012_1Mesh = new SplatMesh({ packedSplats: chunk012_1PackedSplats });
+        chunk012_1Mesh.position.set(0, bottomRowY, 0); // Same position
+        chunk012_1Mesh.scale.setScalar(1.0);
+        scene.add(chunk012_1Mesh);
+        allHouses.push(chunk012_1Mesh);
+        
+        const chunk012_2Mesh = new SplatMesh({ packedSplats: chunk012_2PackedSplats });
+        chunk012_2Mesh.position.set(0, bottomRowY, 0); // Same position
+        chunk012_2Mesh.scale.setScalar(1.0);
+        scene.add(chunk012_2Mesh);
+        allHouses.push(chunk012_2Mesh);
+        
+        // Store additional composite references for scaling - make them global
+        window.chunk012_composite0 = chunk012_0Mesh;
+        window.chunk012_composite1 = chunk012_1Mesh;
+        window.chunk012_composite2 = chunk012_2Mesh;
+        
+        console.log("Storing scales for chunk 0+1+2 composite...");
+        storeOriginalScales(chunk012_0Mesh, "chunk012-part0");
+        storeOriginalScales(chunk012_1Mesh, "chunk012-part1");
+        storeOriginalScales(chunk012_2Mesh, "chunk012-part2");
+        
+        // Backup storage with delay
+        setTimeout(() => {
+          if (!originalScales.has(chunk012_0Mesh)) {
+            console.log("Backup: storing chunk012-part0 scales...");
+            storeOriginalScales(chunk012_0Mesh, "chunk012-part0-delayed");
+          }
+          if (!originalScales.has(chunk012_1Mesh)) {
+            console.log("Backup: storing chunk012-part1 scales...");
+            storeOriginalScales(chunk012_1Mesh, "chunk012-part1-delayed");
+          }
+          if (!originalScales.has(chunk012_2Mesh)) {
+            console.log("Backup: storing chunk012-part2 scales...");
+            storeOriginalScales(chunk012_2Mesh, "chunk012-part2-delayed");
+          }
+        }, 500);
+
+
+        console.log("Composite houses added to scene");
+        console.log("Total objects in scene:", scene.children.length);
+
+        console.log("All meshes positioned successfully");
+        
+        // Function to check if all original scales are ready and apply defaults
+        function applyDefaultScalingWhenReady() {
+          const checkAndApply = () => {
+            const allMeshes = [house0Mesh, house1Mesh, house2Mesh, house0Composite, house1Composite].concat(
+              window.chunk012_composite0 ? [window.chunk012_composite0, window.chunk012_composite1, window.chunk012_composite2] : []
+            );
+            const allReady = allMeshes.every(mesh => {
+              const scales = originalScales.get(mesh);
+              return originalScales.has(mesh) && scales && scales.length > 0;
+            });
+            
+            if (allReady) {
+              console.log("All original scales ready, applying default scaling values...");
+              applySplatScaling(0, params.house0Scale); // chunk_0 = 1.0
+              applySplatScaling(1, params.house1Scale); // chunk_1 = 1.0
+              applySplatScaling(2, params.house2Scale); // chunk_2 = 1.0
+              console.log("Default scaling values applied");
+            } else {
+              console.log("Waiting for all original scales to be ready...");
+              console.log("Status:", allMeshes.map((mesh, i) => {
+                const names = ['house0Mesh', 'house1Mesh', 'house2Mesh', 'house0Composite', 'house1Composite'];
+                const scales = originalScales.get(mesh);
+                return `${names[i]}: ${originalScales.has(mesh) && scales && scales.length > 0 ? 'ready' : 'not ready'}`;
+              }));
+              setTimeout(checkAndApply, 200); // Check again in 200ms
+            }
+          };
+          
+          // Start checking after a short delay
+          setTimeout(checkAndApply, 600);
+        }
+        
+        applyDefaultScalingWhenReady();
+        
+        // Create 3D house labels
+        createHouseLabels();
+        
+        // Create GUI controls for splat scaling (with slight delay to ensure splats are ready)
+        setTimeout(() => {
+          setupGUI();
+        }, 100);
+
+      } catch (error) {
+        console.error("Error loading PLY files:", error);
+        
+        // Fallback: Add a simple cube to test if rendering works
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const cube = new THREE.Mesh(geometry, material);
+        cube.position.set(0, 0, 0);
+        scene.add(cube);
+        console.log("Added fallback cube for testing");
+      }
+
+      // Test cube removed
+
+      // Store original scales for each mesh
+      const originalScales = new Map();
+      
+      // Function to store original scales
+      function storeOriginalScales(mesh, houseName) {
+        if (!mesh || !mesh.packedSplats) {
+          console.warn(`Cannot store scales for ${houseName}: mesh or packedSplats is null`);
+          return;
+        }
+        
+        console.log(`Attempting to store scales for ${houseName}...`);
+        console.log(`Mesh packedSplats type:`, mesh.packedSplats.constructor.name);
+        
+        const scales = [];
+        let splatCount = 0;
+        try {
+          mesh.packedSplats.forEachSplat((index, center, splatScales, quaternion, opacity, color) => {
+            scales[index] = splatScales.clone();
+            splatCount++;
+            
+            // Log first few for debugging
+            if (splatCount <= 3) {
+              console.log(`${houseName} splat ${index}:`, splatScales);
+            }
+          });
+          
+          console.log(`${houseName}: forEachSplat processed ${splatCount} splats, scales array length: ${scales.length}`);
+          
+          originalScales.set(mesh, scales);
+          console.log(`Stored original scales for ${houseName} (${scales.length} splats)`);
+          
+          // Debug: Log first few scales
+          if (scales.length > 0) {
+            console.log(`${houseName} first splat scale:`, scales[0]);
+          } else {
+            console.warn(`${houseName}: No scales were stored!`);
+          }
+        } catch (error) {
+          console.error(`Error storing original scales for ${houseName}:`, error);
+        }
+      }
+      
+      // Function to apply splat scaling to a specific mesh
+      function applySplatScalingToMesh(mesh, scale, meshName) {
+        console.log(`applySplatScalingToMesh called for ${meshName} with scale ${scale}`);
+        
+        if (!mesh || !mesh.packedSplats) {
+          console.warn(`Cannot apply scaling to ${meshName}: mesh or packedSplats is null`);
+          return;
+        }
+        
+        // Get original scales
+        const origScales = originalScales.get(mesh);
+        if (!origScales) {
+          console.warn(`No original scales found for ${meshName}. Available meshes:`, originalScales.size);
+          console.log("Available mesh keys in originalScales:");
+          for (let key of originalScales.keys()) {
+            console.log("  Key:", key.constructor.name, key === mesh ? "(THIS MESH)" : "");
+          }
+          return;
+        }
+        
+        console.log(`Found original scales for ${meshName}: ${origScales.length} splats`);
+        
+        try {
+          let processedCount = 0;
+          // Apply scaling to each splat using setSplat (like the reference file)
+          mesh.packedSplats.forEachSplat((index, center, splatScales, quaternion, opacity, color) => {
+            if (origScales[index]) {
+              // Multiply original scale by the scale factor (minimum 0.01 to avoid invisible splats)
+              const safeScale = Math.max(0.01, scale);
+              const newScales = origScales[index].clone().multiplyScalar(safeScale);
+              mesh.packedSplats.setSplat(index, center, newScales, quaternion, opacity, color);
+              processedCount++;
+            }
+          });
+          
+          // Mark for update (like in the reference file)
+          mesh.packedSplats.needsUpdate = true;
+          mesh.needsUpdate = true;
+          
+          console.log(`Applied splat scale ${scale} to ${meshName} (processed ${processedCount} splats)`);
+        } catch (error) {
+          console.error(`Error applying splat scale to ${meshName}:`, error);
+        }
+      }
+      
+      // Function to apply splat scaling using direct splat manipulation
+      function applySplatScaling(houseIndex, scale) {
+        let mesh, houseName, compositeMesh;
+        switch(houseIndex) {
+          case 0: 
+            mesh = house0Mesh; 
+            houseName = "house0"; 
+            compositeMesh = house0Composite;
+            break;
+          case 1: 
+            mesh = house1Mesh; 
+            houseName = "house1"; 
+            compositeMesh = house1Composite;
+            break;
+          case 2: 
+            mesh = house2Mesh; 
+            houseName = "house2"; 
+            compositeMesh = null; // No composite for chunk_2 in new layout
+            break;
+          default: 
+            console.warn(`Invalid house index: ${houseIndex}`);
+            return;
+        }
+        
+        console.log(`Attempting to apply splat scale ${scale} to ${houseName} and its composite layer`);
+        
+        // Apply scaling to the main house
+        applySplatScalingToMesh(mesh, scale, houseName);
+        
+        // Apply scaling to the composite layer
+        if (compositeMesh) {
+          console.log(`Scaling composite mesh for ${houseName}:`, !!compositeMesh);
+          applySplatScalingToMesh(compositeMesh, scale, `${houseName}-composite`);
+        } else {
+          console.log(`No composite mesh found for ${houseName}`);
+        }
+        
+        // Apply scaling to additional composite parts in chunk 0+1+2
+        if (houseIndex === 0) {
+          console.log("Checking chunk012_composite0:", !!window.chunk012_composite0);
+          if (window.chunk012_composite0) {
+            applySplatScalingToMesh(window.chunk012_composite0, scale, "chunk012-part0");
+          }
+        }
+        if (houseIndex === 1) {
+          console.log("Checking chunk012_composite1:", !!window.chunk012_composite1);
+          if (window.chunk012_composite1) {
+            applySplatScalingToMesh(window.chunk012_composite1, scale, "chunk012-part1");
+          }
+        }
+        if (houseIndex === 2) {
+          console.log("Checking chunk012_composite2:", !!window.chunk012_composite2);
+          if (window.chunk012_composite2) {
+            applySplatScalingToMesh(window.chunk012_composite2, scale, "chunk012-part2");
+          }
+        }
+      }
+
+      // Setup GUI controls
+      function setupGUI() {
+        const gui = new GUI({ title: "LOD chunk scale compensations" });
+        
+        // Individual house controls
+        gui.add(params, "house0Scale", 0, 5.0, 0.1)
+          .name("chunk_0")
+          .onChange((value) => {
+            applySplatScaling(0, value);
+          });
+          
+        gui.add(params, "house1Scale", 0, 5.0, 0.1)
+          .name("chunk_1")
+          .onChange((value) => {
+            applySplatScaling(1, value);
+          });
+          
+        gui.add(params, "house2Scale", 0, 5.0, 0.1)
+          .name("chunk_2")
+          .onChange((value) => {
+            applySplatScaling(2, value);
+          });
+        
+        // Reset button
+        gui.add({
+          "Reset": () => {
+            console.log("Resetting all chunk scales to default values");
+            params.house0Scale = 1.0;
+            params.house1Scale = 1.0;
+            params.house2Scale = 1.0;
+            applySplatScaling(0, 1.0);
+            applySplatScaling(1, 1.0);
+            applySplatScaling(2, 1.0);
+            // Update GUI display
+            for (const controller of gui.controllersRecursive()) {
+              controller.updateDisplay();
+            }
+          }
+        }, "Reset");
+        
+        // Temporary debug button to check all chunks
+        gui.add({
+          "Debug All Chunks": () => {
+            console.log("=== ALL CHUNKS DEBUG ===");
+            console.log("Main meshes:");
+            console.log("  house0Mesh exists:", !!house0Mesh, "has originalScales:", originalScales.has(house0Mesh));
+            console.log("  house1Mesh exists:", !!house1Mesh, "has originalScales:", originalScales.has(house1Mesh));
+            console.log("  house2Mesh exists:", !!house2Mesh, "has originalScales:", originalScales.has(house2Mesh));
+            
+            console.log("Composite meshes:");
+            console.log("  house0Composite exists:", !!house0Composite, "has originalScales:", originalScales.has(house0Composite));
+            console.log("  house1Composite exists:", !!house1Composite, "has originalScales:", originalScales.has(house1Composite));
+            
+            console.log("Scale counts:");
+            if (originalScales.has(house0Mesh)) {
+              console.log("  house0 stored scales count:", originalScales.get(house0Mesh).length);
+            }
+            if (originalScales.has(house1Mesh)) {
+              console.log("  house1 stored scales count:", originalScales.get(house1Mesh).length);
+            }
+            if (originalScales.has(house2Mesh)) {
+              console.log("  house2 stored scales count:", originalScales.get(house2Mesh).length);
+            }
+            if (originalScales.has(house0Composite)) {
+              console.log("  house0Composite stored scales count:", originalScales.get(house0Composite).length);
+            }
+            if (originalScales.has(house1Composite)) {
+              console.log("  house1Composite stored scales count:", originalScales.get(house1Composite).length);
+            }
+            
+            console.log("Total originalScales entries:", originalScales.size);
+          }
+        }, "Debug All Chunks");
+
+      }
+
+      // Function to create 3D text sprites for house labels
+      function createHouseLabels() {
+        const spacing = 3;
+        const topRowY = 2;
+        const bottomRowY = -2;
+        
+        // House positions and labels
+        const houseLabels = [
+          // Top row: chunk_0, chunk_1, chunk_2
+          { position: new THREE.Vector3(-spacing, topRowY - 1.5, 0), text: "chunk_0\n1% memory" },
+          { position: new THREE.Vector3(0, topRowY - 1.5, 0), text: "chunk_1\n9% memory" },
+          { position: new THREE.Vector3(spacing, topRowY - 1.5, 0), text: "chunk_2\n90% memory" },
+          // Bottom row: chunk 0+1, chunk 0+1+2, full model
+          { position: new THREE.Vector3(-spacing, bottomRowY - 1.5, 0), text: "chunk 0+1\n10% memory" },
+          { position: new THREE.Vector3(0, bottomRowY - 1.5, 0), text: "chunk 0+1+2\n100% memory" },
+          { position: new THREE.Vector3(spacing, bottomRowY - 1.5, 0), text: "full model\n100% memory" }
+        ];
+        
+        houseLabels.forEach(({ position, text }) => {
+          // Create canvas for text
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.width = 512;
+          canvas.height = 256; // Doubled height to accommodate larger text
+          
+          // Style the text
+          context.fillStyle = 'rgba(0, 0, 0, 0.8)';
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          
+          context.fillStyle = 'white';
+          context.textAlign = 'center';
+          context.textBaseline = 'middle';
+          
+          // Handle multi-line text with different font sizes
+          const lines = text.split('\n');
+          const firstLineFontSize = 72;
+          const secondLineFontSize = Math.round(72 * 0.6); // 0.6x size = 43px
+          const firstLineHeight = 90;
+          const secondLineHeight = 54; // Proportionally smaller
+          
+          // Calculate total height and starting position
+          const totalHeight = firstLineHeight + (lines.length > 1 ? secondLineHeight : 0);
+          let currentY = canvas.height / 2 - totalHeight / 2 + firstLineHeight / 2;
+          
+          lines.forEach((line, index) => {
+            if (index === 0) {
+              // First line - larger font
+              context.font = `bold ${firstLineFontSize}px Arial`;
+              context.fillText(line, canvas.width / 2, currentY);
+              currentY += firstLineHeight;
+            } else {
+              // Second line - smaller font (0.6x)
+              context.font = `bold ${secondLineFontSize}px Arial`;
+              context.fillText(line, canvas.width / 2, currentY);
+              currentY += secondLineHeight;
+            }
+          });
+          
+          // Create texture from canvas
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.needsUpdate = true;
+          
+          // Create sprite material and sprite
+          const spriteMaterial = new THREE.SpriteMaterial({ 
+            map: texture,
+            transparent: true,
+            alphaTest: 0.1
+          });
+          const sprite = new THREE.Sprite(spriteMaterial);
+          
+          // Scale and position the sprite (increased to accommodate larger text)
+          sprite.scale.set(2, 1, 1); // width, height, depth - doubled height
+          sprite.position.copy(position);
+          
+          scene.add(sprite);
+          // Don't add labels to allHouses array - we want them to stay fixed while houses rotate
+        });
+      }
+
+      // Simple camera controls with WASD
+      const keys = {};
+      const moveSpeed = 0.2;
+      
+      window.addEventListener('keydown', (event) => {
+        keys[event.code] = true;
+      });
+      
+      window.addEventListener('keyup', (event) => {
+        keys[event.code] = false;
+      });
+      
+      function updateCamera() {
+        if (keys['KeyW']) camera.position.z -= moveSpeed;
+        if (keys['KeyS']) camera.position.z += moveSpeed;
+        if (keys['KeyA']) camera.position.x -= moveSpeed;
+        if (keys['KeyD']) camera.position.x += moveSpeed;
+        if (keys['KeyQ']) camera.position.y += moveSpeed;
+        if (keys['KeyE']) camera.position.y -= moveSpeed;
+      }
+
+      // Animation loop
+      renderer.setAnimationLoop(function animate(time) {
+        updateCamera();
+        
+        // Rotate all houses slowly around Y axis (horizontal rotation)
+        const rotationSpeed = 0.0005; // Very slow rotation
+        allHouses.forEach(house => {
+          house.rotation.y = time * rotationSpeed;
+        });
+        
+        renderer.render(scene, camera);
+      });
+    }
+
+    // Initialize the application
+    init().catch(console.error);
+  </script>
+</body>
+
+</html>

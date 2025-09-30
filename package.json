@@ -1,0 +1,29 @@
+{
+  "name": "womblelabsdemos",
+  "version": "1.0.0",
+  "description": "Interactive 3D demos showcasing Gaussian Splat technology and Three.js implementations",
+  "main": "index.html",
+  "scripts": {
+    "dev": "python -m http.server 8000",
+    "serve": "npx serve .",
+    "build": "echo 'Static files - no build needed'",
+    "start": "npx serve ."
+  },
+  "keywords": [
+    "threejs",
+    "gaussian-splats",
+    "3d",
+    "webgl",
+    "interactive",
+    "demos"
+  ],
+  "author": "Womble Labs",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wombleman/womblelabsdemos.git"
+  },
+  "homepage": "https://womblelabsdemos.vercel.app",
+  "devDependencies": {},
+  "dependencies": {}
+}
