@@ -1,13 +1,26 @@
 {
-  "cleanUrls": true,
-  "rewrites": [
+  "version": 2,
+  "builds": [
     {
-      "source": "/lod",
-      "destination": "/lod.html"
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "public"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/lod",
+      "dest": "/lod.html"
     },
     {
-      "source": "/thanos",
-      "destination": "/thanos.html"
+      "src": "/thanos",
+      "dest": "/thanos.html"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/$1"
     }
   ],
   "headers": [

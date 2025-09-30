@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "python -m http.server 8000",
     "serve": "npx serve .",
-    "build": "echo 'Static files - no build needed'",
-    "start": "npx serve ."
+    "build": "mkdir -p public && cp -r *.html assets public/",
+    "start": "npx serve public"
   },
   "keywords": [
     "threejs",
