@@ -26,5 +26,8 @@
   },
   "homepage": "https://womblelabsdemos.vercel.app",
   "devDependencies": {},
-  "dependencies": {}
+  "dependencies": {},
+  "engines": {
+    "node": "20.x"
+  }
 }
