@@ -1,32 +1,15 @@
 {
   "version": 2,
   "name": "womblelabsdemos",
-  "builds": [
+  "cleanUrls": true,
+  "rewrites": [
     {
-      "src": "*.html",
-      "use": "@vercel/static"
+      "source": "/lod",
+      "destination": "/lod.html"
     },
     {
-      "src": "assets/**",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/",
-      "dest": "/index.html"
-    },
-    {
-      "src": "/lod",
-      "dest": "/lod.html"
-    },
-    {
-      "src": "/forest",
-      "dest": "/forest.html"
-    },
-    {
-      "src": "/thanos",
-      "dest": "/thanos_snap_demo.html"
+      "source": "/thanos",
+      "destination": "/thanos.html"
     }
   ],
   "headers": [
