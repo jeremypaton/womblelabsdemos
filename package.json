@@ -28,6 +28,6 @@
   "devDependencies": {},
   "dependencies": {},
   "engines": {
-    "node": "18.x"
+    "node": "22.x"
   }
 }
